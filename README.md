@@ -1,5 +1,7 @@
 # pi-localsend
 
+![pi.dev sending files over LocalSend](screenshot.png)
+
 LocalSend extension for the [pi coding agent](https://github.com/earendil-works/pi).
 
 Send and receive files between pi and any device running [LocalSend](https://github.com/localsend/localsend) — phone, tablet, or another computer — directly over the local network. No account, no cloud, nothing leaves the LAN.

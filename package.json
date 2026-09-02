@@ -45,6 +45,7 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Smotherer007/pi-localsend/main/screenshot.png"
   }
 }

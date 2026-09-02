@@ -80,12 +80,18 @@ report this as a note; it is not an error.
 ## Two errors worth recognising
 
 - **`tlsv13 alert certificate required`** while sending: the peer wants the
-  sender to present a certificate, and none could be created. `openssl` has
-  to be installed on this machine, even when the local `protocol` is http.
+  sender to present a certificate and none could be created, which normally
+  means `~/.pi` is not writable.
 - **`Parse Error: Expected HTTP/`**: plain http was spoken to a peer that is
   actually using TLS. Drop the `protocol: http` override and let it default
   to https, or take the protocol from what `localsend_devices` reported for
   that device.
+- **`alert certificate unknown` (alert 46)** while sending: the peer refused
+  the certificate this machine presented. Note the direction — this alert
+  arrives *from* the peer and is not about trusting theirs, so forcing
+  `protocol: http` is not the fix and will only produce the parse error
+  above. Deleting `~/.pi/localsend/cert.pem` and `key.pem` forces a fresh
+  certificate on the next attempt.
 
 ## Settings worth knowing
 

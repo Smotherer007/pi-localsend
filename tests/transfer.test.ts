@@ -318,3 +318,89 @@ describe("https transfer", () => {
     assert.strictEqual(fs.readFileSync(path.join(downloadDir, "secure.txt"), "utf-8"), "over tls");
   });
 });
+
+describe("coexisting with the LocalSend app on the same machine", () => {
+  let downloadDir: string;
+  let squatter: import("node:dgram").Socket | null = null;
+  let tcpSquatter: import("node:net").Server | null = null;
+
+  beforeEach(() => {
+    downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "ls-coexist-"));
+  });
+
+  afterEach(async () => {
+    if (squatter) {
+      await new Promise<void>((resolve) => squatter!.close(() => resolve()));
+      squatter = null;
+    }
+    if (tcpSquatter) {
+      await new Promise<void>((resolve) => tcpSquatter!.close(() => resolve()));
+      tcpSquatter = null;
+    }
+    fs.rmSync(downloadDir, { recursive: true, force: true });
+  });
+
+  /** Occupy the ports the LocalSend desktop app holds while it runs. */
+  async function occupyLocalSendPorts(): Promise<boolean> {
+    const dgram = await import("node:dgram");
+    const net = await import("node:net");
+
+    const udp = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    const bound = await new Promise<boolean>((resolve) => {
+      udp.once("error", () => resolve(false));
+      udp.bind(53317, () => resolve(true));
+    });
+    if (!bound) return false;
+    squatter = udp;
+
+    const tcp = net.createServer();
+    const tcpBound = await new Promise<boolean>((resolve) => {
+      tcp.once("error", () => resolve(false));
+      tcp.listen(53317, () => resolve(true));
+    });
+    if (tcpBound) tcpSquatter = tcp;
+    return true;
+  }
+
+  it("still receives a transfer while port 53317 is taken", async (t) => {
+    if (!(await occupyLocalSendPorts())) {
+      return t.skip("could not occupy port 53317 in this environment");
+    }
+
+    const config = makeConfig(downloadDir, { requirePin: false });
+    const handle = await receiveOnce(config, {
+      downloadDir,
+      pin: null,
+      timeoutMs: 10_000,
+    });
+
+    // The receiver must have chosen a port of its own rather than fighting
+    // for the one the app holds.
+    assert.notStrictEqual(handle.port, 53317);
+
+    await sendFiles(config, {
+      peer: peerAt(handle.port),
+      payloads: [{ fileName: "coexist.txt", content: Buffer.from("side by side"), size: 12 }],
+    });
+
+    const received = await handle.done;
+    assert.strictEqual(received.outcome, "completed");
+    assert.strictEqual(
+      fs.readFileSync(path.join(downloadDir, "coexist.txt"), "utf-8"),
+      "side by side",
+    );
+  });
+
+  it("scans without failing when the app holds the multicast port", async (t) => {
+    if (!(await occupyLocalSendPorts())) {
+      return t.skip("could not occupy port 53317 in this environment");
+    }
+
+    const { discoverPeers } = await import("../src/discovery.ts");
+    const outcome = await discoverPeers(makeConfig(downloadDir), { timeoutMs: 500 });
+
+    // A busy multicast port is a documented degradation, never an error.
+    assert.ok(Array.isArray(outcome.peers));
+    assert.ok(outcome.listenPort > 0);
+  });
+});

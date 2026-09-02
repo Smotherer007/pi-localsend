@@ -8,7 +8,7 @@
 import { Type } from "typebox";
 import { updateConfig } from "../config.ts";
 import { localAddresses } from "../net.ts";
-import { isOpensslAvailable } from "../tls.ts";
+import { isEncryptionAvailable } from "../tls.ts";
 import { formatStatus } from "../formatting/formatters.ts";
 import type { LocalSendConfig } from "../types.ts";
 
@@ -40,7 +40,7 @@ export const LocalSendSetupTool = {
     protocol: Type.Optional(
       Type.String({
         description:
-          "http (default, no dependencies) or https (needs openssl on this machine; falls back to http if unavailable).",
+          "http (default) or https. Both work without anything installed: the certificate is generated in process. Sending to a LocalSend app always presents a certificate regardless of this setting, because the app requires one.",
       }),
     ),
     port: Type.Optional(
@@ -67,7 +67,7 @@ export const LocalSendSetupTool = {
       content: [
         {
           type: "text" as const,
-          text: `LocalSend settings saved.\n\n${formatStatus(config, localAddresses(), true, isOpensslAvailable())}`,
+          text: `LocalSend settings saved.\n\n${formatStatus(config, localAddresses(), true, isEncryptionAvailable())}`,
         },
       ],
       details: {

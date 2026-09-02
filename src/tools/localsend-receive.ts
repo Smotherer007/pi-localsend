@@ -9,8 +9,14 @@
 import { Type } from "typebox";
 import { getConfig } from "../config.ts";
 import { receiveOnce } from "../server/receive-server.ts";
-import { expandPath, generatePin, localAddresses } from "../net.ts";
+import { expandPath, formatBytes, generatePin, localAddresses } from "../net.ts";
 import { formatListening, formatReceiveResult } from "../formatting/formatters.ts";
+
+/** The shape pi expects from a progress update: a tool result in miniature. */
+export interface ToolUpdate {
+  readonly content: ReadonlyArray<{ type: "text"; text: string }>;
+  readonly details?: Record<string, unknown>;
+}
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const MAX_TIMEOUT_SECONDS = 3600;
@@ -57,7 +63,7 @@ export const LocalSendReceiveTool = {
       noPin?: boolean;
     },
     signal: AbortSignal,
-    onUpdate?: (update: unknown) => void,
+    onUpdate?: (update: ToolUpdate) => void,
   ) {
     const config = getConfig();
     const seconds = Math.min(
@@ -71,11 +77,31 @@ export const LocalSendReceiveTool = {
     const usePin = config.requirePin && !params.noPin;
     const pin = usePin ? (params.pin?.trim() || generatePin()) : null;
 
+    // pi renders a progress update as a tool result, so it must have the same
+    // shape as one: a `content` array of blocks. Anything else crashes the
+    // renderer rather than this tool.
+    const report = (text: string, details: Record<string, unknown>) => {
+      if (typeof onUpdate !== "function") return;
+      try {
+        onUpdate({ content: [{ type: "text", text }], details });
+      } catch {
+        /* progress output is best-effort */
+      }
+    };
+
+    const arrived: string[] = [];
     const handle = await receiveOnce(config, {
       downloadDir,
       pin,
       timeoutMs: seconds * 1000,
       signal,
+      onFile: (file) => {
+        arrived.push(file.fileName);
+        report(`Received ${file.fileName} (${formatBytes(file.size)}).`, {
+          received: [...arrived],
+          bytes: file.size,
+        });
+      },
     });
 
     const address = {
@@ -87,13 +113,12 @@ export const LocalSendReceiveTool = {
 
     // The PIN is useless once the call returns, so push it out while the
     // receiver is still waiting.
-    if (typeof onUpdate === "function") {
-      try {
-        onUpdate({ type: "text", text: banner });
-      } catch {
-        /* progress output is best-effort */
-      }
-    }
+    report(banner, {
+      listening: true,
+      port: handle.port,
+      protocol: handle.protocol,
+      pinUsed: Boolean(pin),
+    });
 
     const result = await handle.done;
 

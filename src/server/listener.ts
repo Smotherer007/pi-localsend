@@ -39,7 +39,7 @@ export function resolveTransport(config: LocalSendConfig): Transport {
       tls: null,
       fingerprint: config.fingerprint,
       downgradeReason:
-        "https was requested but no certificate could be created (openssl not found), so this transfer uses plain http.",
+        "https was requested but no certificate could be created (the ~/.pi directory may not be writable), so this transfer uses plain http.",
     };
   }
 

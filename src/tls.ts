@@ -1,19 +1,29 @@
 /**
- * Optional TLS support.
+ * The device's TLS identity.
  *
- * LocalSend normally runs over HTTPS with a self-signed certificate, and the
- * device fingerprint is then the SHA-256 of that certificate. Node cannot
- * generate certificates on its own, and pulling in a crypto library for one
- * optional feature is not worth it, so this shells out to openssl when it is
- * available and cleanly reports that HTTPS is unavailable when it is not.
- * The protocol supports plain HTTP, which is the fallback.
+ * LocalSend runs over HTTPS with a self-signed certificate, and the device
+ * fingerprint is the SHA-256 of that certificate. The certificate is
+ * generated in process (see x509.ts) rather than by shelling out to openssl,
+ * because a sender must present a client certificate for any transfer to a
+ * LocalSend app to work at all -- depending on a binary that is routinely
+ * missing on Windows would make the extension unusable there.
  */
 
-import { execFileSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { generateSelfSignedCertificate } from "./x509.ts";
+
+/**
+ * Apple platforms reject TLS server certificates with a lifetime longer than
+ * 398 days, so a long-lived certificate is refused outright by an iPhone.
+ */
+const VALIDITY_DAYS = 365;
+
+/** Regenerate before it expires rather than failing a transfer mid-week. */
+const RENEW_BEFORE_MS = 14 * 24 * 60 * 60 * 1000;
+
 
 export interface TlsMaterial {
   readonly cert: string;
@@ -27,13 +37,13 @@ function certDir(): string {
   return path.join(home, ".pi", "localsend");
 }
 
-export function isOpensslAvailable(): boolean {
-  try {
-    execFileSync("openssl", ["version"], { stdio: "ignore", timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * Can this machine present a TLS identity at all? True everywhere Node can
+ * write to the config directory, which is why it no longer depends on what
+ * happens to be installed on the host.
+ */
+export function isEncryptionAvailable(): boolean {
+  return ensureTlsMaterial() !== null;
 }
 
 /** SHA-256 over the certificate's DER bytes, which is what peers compare. */
@@ -43,9 +53,39 @@ export function certificateFingerprint(certPem: string): string {
 }
 
 /**
- * Return the cached self-signed certificate, generating one on first use.
- * Returns null when openssl is unavailable, so the caller can fall back to
- * plain HTTP instead of failing the transfer.
+ * Is this certificate one a peer will actually accept?
+ *
+ * Earlier versions of this extension generated a CA certificate with no
+ * subjectAltName, which LocalSend rejects during the handshake. Checking the
+ * stored certificate rather than only its presence means an installation
+ * that has one of those repairs itself on the next transfer.
+ */
+export function isUsableCertificate(certPem: string): boolean {
+  try {
+    const parsed = new crypto.X509Certificate(certPem);
+
+    if (parsed.ca) return false;
+    if (!parsed.subjectAltName) return false;
+
+    const expiry = Date.parse(parsed.validTo);
+    if (Number.isNaN(expiry) || expiry - Date.now() < RENEW_BEFORE_MS) return false;
+
+    // Node exposes the extended key usage OIDs as keyUsage.
+    // 1.3.6.1.5.5.7.3.2 is clientAuth.
+    const usage = parsed.keyUsage ?? [];
+    if (usage.length > 0 && !usage.includes("1.3.6.1.5.5.7.3.2")) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Return the cached certificate, generating one on first use and replacing
+ * one a peer would reject. Returns null only if the config directory cannot
+ * be written, so the caller can explain itself instead of failing with a TLS
+ * error.
  */
 export function ensureTlsMaterial(): TlsMaterial | null {
   const dir = certDir();
@@ -56,41 +96,30 @@ export function ensureTlsMaterial(): TlsMaterial | null {
     if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       const cert = fs.readFileSync(certPath, "utf-8");
       const key = fs.readFileSync(keyPath, "utf-8");
-      return { cert, key, fingerprint: certificateFingerprint(cert) };
+      if (isUsableCertificate(cert)) {
+        return { cert, key, fingerprint: certificateFingerprint(cert) };
+      }
+      // Falls through to regeneration below.
     }
   } catch {
     // A corrupt or unreadable pair is regenerated below.
   }
 
-  if (!isOpensslAvailable()) return null;
-
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    execFileSync(
-      "openssl",
-      [
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-keyout",
-        keyPath,
-        "-out",
-        certPath,
-        "-days",
-        "3650",
-        "-nodes",
-        "-subj",
-        "/CN=LocalSend",
-      ],
-      { stdio: "ignore", timeout: 60_000 },
-    );
+
+    const generated = generateSelfSignedCertificate({ validityDays: VALIDITY_DAYS });
+    fs.writeFileSync(keyPath, generated.key, { encoding: "utf-8", mode: 0o600 });
+    fs.writeFileSync(certPath, generated.cert, { encoding: "utf-8", mode: 0o644 });
     fs.chmodSync(keyPath, 0o600);
 
-    const cert = fs.readFileSync(certPath, "utf-8");
-    const key = fs.readFileSync(keyPath, "utf-8");
-    return { cert, key, fingerprint: certificateFingerprint(cert) };
+    return {
+      cert: generated.cert,
+      key: generated.key,
+      fingerprint: certificateFingerprint(generated.cert),
+    };
   } catch {
+    // Only an unwritable config directory gets here.
     return null;
   }
 }

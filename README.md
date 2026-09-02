@@ -125,16 +125,22 @@ Settings are saved to `~/.pi/localsend-config.json` (mode `0600`) by `localsend_
 
 LocalSend normally runs over HTTPS with a self-signed certificate, where the device fingerprint is the hash of that certificate. Node cannot generate certificates on its own, and a crypto library is a lot of dependency for one optional feature, so:
 
-- **`protocol: http`** (default) works everywhere with no dependencies. The protocol supports it; the fingerprint is then a stable random id.
-- **`protocol: https`** generates a self-signed certificate with `openssl` on first use and caches it in `~/.pi/localsend/`. If `openssl` is not installed the transfer falls back to http and says so rather than failing.
+- **`protocol: http`** (default) is what this machine *listens* with. The protocol supports it; the fingerprint is then a stable random id.
+- **`protocol: https`** listens with TLS instead.
+
+Either way a certificate is generated on first use and cached in `~/.pi/localsend/`, because **sending** to a LocalSend app always requires one regardless of this setting — see below.
+
+The certificate is built in process (`src/x509.ts`) rather than by shelling out to `openssl`: a sender that cannot present a certificate cannot talk to a LocalSend app at all, and depending on a binary that is routinely absent on Windows would make the extension unusable there. Nothing in this package spawns an external process, so Windows, Linux and macOS behave identically.
+
+It is an end-entity certificate (`CA:FALSE`) with a `subjectAltName`, `clientAuth` and `serverAuth` in its extended key usage, and a 365-day lifetime. None of that is cosmetic: LocalSend verifies the certificate a sender presents, and a webpki-based verifier (rustls) rejects a CA certificate, one without a SAN, or one without `clientAuth` — the handshake then ends in a `certificate unknown` alert (46). Apple platforms separately refuse server certificates valid for more than 398 days. A cached certificate that fails these checks, including one written by an earlier version, is detected and replaced automatically.
 
 When connecting *to* a peer over https, certificate chain validation is off by design: LocalSend peers are self-signed, and the protocol's trust anchor is the fingerprint, not a CA.
 
-Sending to an encrypted peer also needs a certificate **on this side**. The LocalSend app identifies the sender by the fingerprint of the certificate it presents, so its TLS server requests one; a sender that presents nothing never gets past the handshake and sees a `tlsv13 alert certificate required` (alert 116). This extension therefore presents its own self-signed certificate when talking to an https peer, and reports that certificate's SHA-256 as its fingerprint rather than the random id used in http mode. That means `openssl` is required to send to an encrypted peer even when `protocol` is left at `http`; without it the transfer fails with an explanation instead of a TLS error.
+Sending to an encrypted peer also needs a certificate **on this side**. The LocalSend app identifies the sender by the fingerprint of the certificate it presents, so its TLS server requests one; a sender that presents nothing never gets past the handshake and sees a `tlsv13 alert certificate required` (alert 116). This extension therefore presents its own certificate when talking to an https peer, and reports that certificate's SHA-256 as its fingerprint rather than the random id used in http mode — including when the local `protocol` setting is `http`.
 
-### Port 53317
+### Running alongside the LocalSend app
 
-The LocalSend desktop app owns UDP/TCP 53317 while it runs. This extension listens on a free port instead and advertises it in its announcement, so both can coexist. The one consequence is that scans may miss devices that answer by multicast rather than HTTP; the tools report that as a note.
+The LocalSend desktop app owns UDP/TCP 53317 while it runs. This extension listens on a free port instead and advertises it in its announcement, so both can coexist — the test suite covers receiving a transfer while 53317 is occupied. The one consequence is that scans may miss devices that answer by multicast rather than HTTP, because the multicast listening port is taken; the tools report that as a note rather than an error. Your phone will simply list both the app and this extension as separate devices.
 
 ## Development
 

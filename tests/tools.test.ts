@@ -43,19 +43,23 @@ function startReceiver(params: Record<string, unknown> = {}) {
   });
 
   let pin: string | null = null;
+  const updates: any[] = [];
   const finished = LocalSendReceiveTool.execute(
     "recv",
     { timeoutSeconds: 10, ...params },
     signal,
     (update: any) => {
-      const text = String(update?.text ?? "");
-      pin = /PIN: (\d{6})/.exec(text)?.[1] ?? null;
+      updates.push(update);
+      // pi renders an update as a tool result and reads update.content, so a
+      // payload without that array crashes the host rather than this tool.
+      const text = String(update?.content?.[0]?.text ?? "");
+      pin = /PIN: (\d{6})/.exec(text)?.[1] ?? pin;
       const port = Number(/port (\d+)/.exec(text)?.[1]);
       if (Number.isFinite(port)) announce(port);
     },
   );
 
-  return { finished, listening, pin: () => pin };
+  return { finished, listening, pin: () => pin, updates };
 }
 
 describe("localsend_setup", () => {
@@ -147,6 +151,32 @@ describe("localsend_send validation", () => {
 });
 
 describe("localsend_send and localsend_receive over loopback", () => {
+  it("reports progress in the shape pi renders, not a bare text object", async () => {
+    const receiver = startReceiver({ noPin: true, downloadDir: path.join(testHome, "shape") });
+    const port = await receiver.listening;
+
+    await LocalSendSendTool.execute(
+      "send",
+      { to: "127.0.0.1", port, protocol: "http", text: "shape check" },
+      signal,
+    );
+    await receiver.finished;
+
+    assert.ok(receiver.updates.length >= 2, "expected a listening banner and a per-file update");
+    for (const update of receiver.updates) {
+      assert.ok(Array.isArray(update.content), "update.content must be an array");
+      for (const block of update.content) {
+        assert.strictEqual(block.type, "text");
+        assert.strictEqual(typeof block.text, "string");
+      }
+      assert.strictEqual(typeof update.details, "object");
+    }
+
+    const texts = receiver.updates.map((update: any) => update.content[0].text);
+    assert.ok(texts.some((text: string) => /Waiting for one incoming transfer/.test(text)));
+    assert.ok(texts.some((text: string) => /Received message\.txt/.test(text)));
+  });
+
   it("sends files and a text snippet, and the receiver saves them", async () => {
     const filePath = path.join(sourceDir, "doc.txt");
     fs.writeFileSync(filePath, "file body");

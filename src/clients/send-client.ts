@@ -224,7 +224,7 @@ export async function sendFiles(
     clientTls = ensureTlsMaterial();
     if (!clientTls) {
       throw new Error(
-        `${peer.alias} uses an encrypted connection, which requires this machine to present its own certificate, and none could be created (openssl was not found). Install openssl, or send to that device over http if it allows that.`,
+        `${peer.alias} uses an encrypted connection, which requires this machine to present its own certificate, and none could be created. Check that ~/.pi is writable.`,
       );
     }
   }

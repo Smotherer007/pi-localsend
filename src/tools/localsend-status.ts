@@ -6,7 +6,7 @@
 import { Type } from "typebox";
 import { getConfig, hasSavedSettings } from "../config.ts";
 import { localAddresses } from "../net.ts";
-import { isOpensslAvailable } from "../tls.ts";
+import { isEncryptionAvailable } from "../tls.ts";
 import { formatStatus } from "../formatting/formatters.ts";
 
 export const LocalSendStatusTool = {
@@ -19,7 +19,7 @@ export const LocalSendStatusTool = {
   execute(_toolCallId: string, _params: {}, _signal: AbortSignal) {
     const config = getConfig();
     const addresses = localAddresses();
-    const httpsAvailable = isOpensslAvailable();
+    const httpsAvailable = isEncryptionAvailable();
 
     return {
       content: [

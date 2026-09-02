@@ -1,6 +1,6 @@
 {
   "name": "@patimweb/pi-localsend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "LocalSend extension for the pi coding agent. Send and receive files over the local network with any LocalSend device, without a cloud service.",
   "keywords": [
     "pi-package",

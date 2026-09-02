@@ -77,6 +77,16 @@ If the LocalSend desktop app is running on *this* machine it may already own
 port 53317, so scans can miss devices that answer by multicast. The tools
 report this as a note; it is not an error.
 
+## Two errors worth recognising
+
+- **`tlsv13 alert certificate required`** while sending: the peer wants the
+  sender to present a certificate, and none could be created. `openssl` has
+  to be installed on this machine, even when the local `protocol` is http.
+- **`Parse Error: Expected HTTP/`**: plain http was spoken to a peer that is
+  actually using TLS. Drop the `protocol: http` override and let it default
+  to https, or take the protocol from what `localsend_devices` reported for
+  that device.
+
 ## Settings worth knowing
 
 `localsend_status` shows the alias other devices see, where incoming files

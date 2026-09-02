@@ -130,6 +130,8 @@ LocalSend normally runs over HTTPS with a self-signed certificate, where the dev
 
 When connecting *to* a peer over https, certificate chain validation is off by design: LocalSend peers are self-signed, and the protocol's trust anchor is the fingerprint, not a CA.
 
+Sending to an encrypted peer also needs a certificate **on this side**. The LocalSend app identifies the sender by the fingerprint of the certificate it presents, so its TLS server requests one; a sender that presents nothing never gets past the handshake and sees a `tlsv13 alert certificate required` (alert 116). This extension therefore presents its own self-signed certificate when talking to an https peer, and reports that certificate's SHA-256 as its fingerprint rather than the random id used in http mode. That means `openssl` is required to send to an encrypted peer even when `protocol` is left at `http`; without it the transfer fails with an explanation instead of a TLS error.
+
 ### Port 53317
 
 The LocalSend desktop app owns UDP/TCP 53317 while it runs. This extension listens on a free port instead and advertises it in its announcement, so both can coexist. The one consequence is that scans may miss devices that answer by multicast rather than HTTP; the tools report that as a note.

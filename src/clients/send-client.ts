@@ -23,6 +23,7 @@ import type {
 } from "../types.ts";
 import { API_PREFIX, PROTOCOL_VERSION, TransferRejectedError } from "../types.ts";
 import { guessFileType, randomId } from "../net.ts";
+import { ensureTlsMaterial } from "../tls.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
@@ -49,17 +50,39 @@ interface RawResponse {
   readonly body: string;
 }
 
-function requestOptions(peer: Peer, path: string, method: string, headers: http.OutgoingHttpHeaders) {
+/** Our own certificate, presented to encrypted peers. */
+export interface ClientTls {
+  readonly cert: string;
+  readonly key: string;
+  readonly fingerprint: string;
+}
+
+function requestOptions(
+  peer: Peer,
+  path: string,
+  method: string,
+  headers: http.OutgoingHttpHeaders,
+  clientTls?: ClientTls | null,
+) {
   return {
     host: peer.host,
     port: peer.port,
     path,
     method,
     headers,
-    // LocalSend peers use self-signed certificates: the protocol's trust
-    // anchor is the fingerprint, not a CA chain, so chain validation would
-    // reject every legitimate peer.
-    ...(peer.protocol === "https" ? { rejectUnauthorized: false } : {}),
+    ...(peer.protocol === "https"
+      ? {
+          // LocalSend peers use self-signed certificates: the protocol's
+          // trust anchor is the fingerprint, not a CA chain, so chain
+          // validation would reject every legitimate peer.
+          rejectUnauthorized: false,
+          // The receiver identifies the sender by the fingerprint of the
+          // certificate it presents, so its TLS server asks for a client
+          // certificate. Without one the handshake ends in a
+          // "certificate required" alert before any HTTP is exchanged.
+          ...(clientTls ? { cert: clientTls.cert, key: clientTls.key } : {}),
+        }
+      : {}),
   };
 }
 
@@ -71,12 +94,13 @@ function send(
   headers: http.OutgoingHttpHeaders,
   timeoutMs: number,
   signal?: AbortSignal,
+  clientTls?: ClientTls | null,
 ): Promise<RawResponse> {
   const transport = peer.protocol === "https" ? https : http;
 
   return new Promise((resolve, reject) => {
     const req = transport.request(
-      requestOptions(peer, path, method, headers),
+      requestOptions(peer, path, method, headers, clientTls),
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -193,6 +217,18 @@ export async function sendFiles(
     throw new Error("Nothing to send.");
   }
 
+  // An encrypted peer demands a client certificate during the handshake, so
+  // it has to exist before the first byte goes out.
+  let clientTls: ClientTls | null = null;
+  if (peer.protocol === "https") {
+    clientTls = ensureTlsMaterial();
+    if (!clientTls) {
+      throw new Error(
+        `${peer.alias} uses an encrypted connection, which requires this machine to present its own certificate, and none could be created (openssl was not found). Install openssl, or send to that device over http if it allows that.`,
+      );
+    }
+  }
+
   const { files, byId } = buildFileDescriptors(payloads);
 
   const prepareBody = Buffer.from(
@@ -202,7 +238,9 @@ export async function sendFiles(
         version: PROTOCOL_VERSION,
         deviceModel: config.deviceModel,
         deviceType: config.deviceType,
-        fingerprint: config.fingerprint,
+        // Over TLS the receiver checks this against the certificate we just
+        // presented, so the two must be the same value.
+        fingerprint: clientTls ? clientTls.fingerprint : config.fingerprint,
         port: config.port || undefined,
         protocol: config.protocol,
         download: false,
@@ -221,6 +259,7 @@ export async function sendFiles(
     { "Content-Type": "application/json", "Content-Length": prepareBody.length },
     REQUEST_TIMEOUT_MS,
     options.signal,
+    clientTls,
   );
 
   // 204 means the receiver wants none of the files -- not an error, but
@@ -267,6 +306,7 @@ export async function sendFiles(
         },
         UPLOAD_TIMEOUT_MS,
         options.signal,
+        clientTls,
       );
 
       if (uploaded.status >= 200 && uploaded.status < 300) {
@@ -282,19 +322,23 @@ export async function sendFiles(
       }
     }
   } catch (err) {
-    await cancelSession(peer, sessionId).catch(() => {});
+    await cancelSession(peer, sessionId, clientTls).catch(() => {});
     throw err;
   }
 
   // A partial failure leaves the peer waiting for the rest of the session.
   if (results.some((file) => !file.ok)) {
-    await cancelSession(peer, sessionId).catch(() => {});
+    await cancelSession(peer, sessionId, clientTls).catch(() => {});
   }
 
   return { peer, sessionId, files: results, bytesSent };
 }
 
-export async function cancelSession(peer: Peer, sessionId: string): Promise<void> {
+export async function cancelSession(
+  peer: Peer,
+  sessionId: string,
+  clientTls?: ClientTls | null,
+): Promise<void> {
   await send(
     peer,
     `${API_PREFIX}/cancel?sessionId=${encodeURIComponent(sessionId)}`,
@@ -302,5 +346,7 @@ export async function cancelSession(peer: Peer, sessionId: string): Promise<void
     undefined,
     {},
     5000,
+    undefined,
+    clientTls,
   );
 }

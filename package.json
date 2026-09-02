@@ -1,0 +1,50 @@
+{
+  "name": "@patimweb/pi-localsend",
+  "version": "1.0.0",
+  "description": "LocalSend extension for the pi coding agent. Send and receive files over the local network with any LocalSend device, without a cloud service.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "localsend",
+    "file-transfer",
+    "lan",
+    "airdrop"
+  ],
+  "author": "Patrick Weppelmann",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Smotherer007/pi-localsend.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Smotherer007/pi-localsend/issues"
+  },
+  "scripts": {
+    "build": "echo 'No build step defined'",
+    "test": "node --experimental-test-module-mocks --experimental-test-coverage --test 'tests/**/*.test.ts'",
+    "test:watch": "node --experimental-test-module-mocks --test --watch 'tests/**/*.test.ts'",
+    "test:coverage": "node --experimental-test-module-mocks --experimental-test-coverage --test 'tests/**/*.test.ts'"
+  },
+  "dependencies": {
+    "typebox": "^1.2.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@semantic-release/git": "^10.0.0",
+    "semantic-release": "^25.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

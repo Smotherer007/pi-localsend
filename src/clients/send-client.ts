@@ -15,13 +15,19 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
 import type {
+  DeviceInfo,
   FileDescriptor,
   LocalSendConfig,
   Peer,
   SendResult,
   SentFile,
 } from "../types.ts";
-import { API_PREFIX, PROTOCOL_VERSION, TransferRejectedError } from "../types.ts";
+import {
+  API_PREFIX,
+  DEFAULT_PORT,
+  PROTOCOL_VERSION,
+  TransferRejectedError,
+} from "../types.ts";
 import { guessFileType, randomId } from "../net.ts";
 import { ensureTlsMaterial } from "../tls.ts";
 
@@ -208,6 +214,36 @@ export function buildFileDescriptors(
   return { files, byId };
 }
 
+/**
+ * The `info` object describing us in a prepare-upload request.
+ *
+ * Every field here is required by the protocol, and the receiver parses the
+ * body with a strict deserialiser: a single missing field is rejected as
+ * invalid JSON rather than ignored. In particular `port` must always be a
+ * number -- the local setting of 0 means "pick a free port per transfer",
+ * which is meaningless to a peer and would serialise away entirely.
+ */
+export function buildSenderInfo(
+  config: LocalSendConfig,
+  peer: Peer,
+  clientTls?: ClientTls | null,
+): DeviceInfo {
+  return {
+    alias: config.alias || "pi",
+    version: PROTOCOL_VERSION,
+    deviceModel: config.deviceModel || "pi",
+    deviceType: config.deviceType || "desktop",
+    // Over TLS the receiver checks this against the certificate we presented,
+    // so the two must be the same value.
+    fingerprint: clientTls ? clientTls.fingerprint : config.fingerprint,
+    port: config.port || DEFAULT_PORT,
+    // Describe the connection we are actually speaking on, so the protocol
+    // and the fingerprint tell the receiver a consistent story.
+    protocol: peer.protocol,
+    download: false,
+  };
+}
+
 export async function sendFiles(
   config: LocalSendConfig,
   options: SendOptions,
@@ -232,21 +268,7 @@ export async function sendFiles(
   const { files, byId } = buildFileDescriptors(payloads);
 
   const prepareBody = Buffer.from(
-    JSON.stringify({
-      info: {
-        alias: config.alias,
-        version: PROTOCOL_VERSION,
-        deviceModel: config.deviceModel,
-        deviceType: config.deviceType,
-        // Over TLS the receiver checks this against the certificate we just
-        // presented, so the two must be the same value.
-        fingerprint: clientTls ? clientTls.fingerprint : config.fingerprint,
-        port: config.port || undefined,
-        protocol: config.protocol,
-        download: false,
-      },
-      files,
-    }),
+    JSON.stringify({ info: buildSenderInfo(config, peer, clientTls), files }),
     "utf-8",
   );
 
